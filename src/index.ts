@@ -6,7 +6,7 @@ import { PostCreateData } from "./models/data_models";
 import { IDGen } from "./services/id_generator";
 
 const wss = new WebSocket.Server({
-  port: 80,
+  port: Number.parseInt(process.env.PORT ?? "80"),
   path: "/",
   maxPayload: 10000 * 1024, // 128 KB
 });
