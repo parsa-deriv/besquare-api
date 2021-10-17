@@ -1,4 +1,4 @@
-export interface Message {
+export interface Event {
   type: string;
   data: any;
 }

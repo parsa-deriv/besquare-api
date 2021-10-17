@@ -1,66 +1,98 @@
 import { WebSocket } from "ws";
 
-import { Message } from "./models/message_model";
-import { Post } from "./models/post_model";
-import { PostCreateData } from "./models/data_models";
 import { IDGen } from "./services/id_generator";
+import { Event } from "./models/event_model";
+import { Post } from "./models/post_model";
+import { IClient } from "./models/client_model";
 
 const wss = new WebSocket.Server({
   port: Number.parseInt(process.env.PORT ?? "80"),
   path: "/",
-  maxPayload: 10000 * 1024, // 128 KB
+  maxPayload: 10000 * 1024, // 10 MB
 });
-const clients = new Map();
+
 const posts: Post[] = [];
+let clients: IClient[] = [];
 
 wss.on("connection", (ws) => {
-  const id = IDGen.newId();
-  const metadata = { id };
-
-  clients.set(ws, metadata);
+  const newClient = { id: IDGen.newId(), socket: ws };
+  clients.push(newClient);
 
   ws.on("message", (messageAsString) => {
-    let message: Message;
-    try {
-      message = JSON.parse(messageAsString.toString());
-      if (!message.type) throw Error("fdks");
-    } catch (error: any) {
-      console.log("Not a message.");
-      return ws.send(error.message ?? "Unknown error");
-    }
-    handleEvent(message, ws);
-    ws.send("Got your message");
+    handleEvent(messageAsString, newClient);
   });
 
   ws.on("close", () => {
-    clients.delete(ws);
     console.log("Closed connection");
+    clients = clients.filter((client) => {
+      client.id != newClient.id;
+    });
   });
 
   ws.on("error", function (err) {
     console.log(err.message);
-    ws.send(err.message);
+    ws.send(
+      JSON.stringify(
+        new Response("error", {}, [err.message ?? "Unknown error"])
+      )
+    );
   });
 });
 
-const handleEvent = (message: Message, client: WebSocket) => {
-  console.log(message.type);
-  if (message.type == "create_post") {
-    let post: PostCreateData;
-    try {
-      post = message.data;
-    } catch (error) {
-      return client.send("Broken request"); // sdkjfjdsfjdsfbds
+const handleEvent = (messageAsString: any, client: IClient) => {
+  let messageJson: Event;
+
+  try {
+    messageJson = JSON.parse(messageAsString.toString());
+
+    if (!messageJson.type) throw Error("No event type specified.");
+
+    if (messageJson.type == "create_post") {
+      let title = messageJson?.data?.title;
+      let description = messageJson?.data?.description;
+      let image = messageJson?.data?.image;
+
+      if (!title || !description || !image)
+        throw Error("Some fields are missing.");
+
+      let post: Post = new Post({
+        title: title,
+        description: description,
+        image: image,
+      });
+
+      posts.push(post);
+
+      clients.forEach((client) => {
+        if (client.subscribedNewPosts)
+          client.socket.send(
+            JSON.stringify(new Response("new_post", { post }, []))
+          );
+      });
+    } else if (messageJson.type == "get_posts") {
+      client.subscribedNewPosts = true;
+
+      client.socket.send(
+        JSON.stringify(new Response("all_posts", { posts }, []))
+      );
     }
-    posts.push(
-      new Post({
-        title: post.title,
-        description: post.description,
-        image: post.image,
-      })
+  } catch (error: any) {
+    return client.socket.send(
+      JSON.stringify(
+        new Response("error", {}, [error.message ?? "Unknown error"])
+      )
     );
-    client.send("Added");
-  } else if (message.type == "get_posts") {
-    client.send(JSON.stringify(posts));
   }
 };
+
+class Response {
+  type: string;
+  data: any;
+  errors: Array<any>;
+
+  constructor(type: string, data: any, errors: Array<any>) {
+    this.type = type;
+    this.data = data;
+    this.errors = errors;
+  }
+}
